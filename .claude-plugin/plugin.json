@@ -1,0 +1,15 @@
+{
+  "name": "where-were-we",
+  "version": "0.12.0",
+  "description": "Your own 50-line STATUS.md, kept out of git: the next session knows where you stopped. One Python file, no database.",
+  "author": {
+    "name": "jsha2217"
+  },
+  "repository": "https://github.com/jsha2217/where-were-we",
+  "keywords": [
+    "memory",
+    "status",
+    "handoff",
+    "context"
+  ]
+}

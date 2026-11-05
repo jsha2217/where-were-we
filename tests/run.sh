@@ -6,7 +6,7 @@ set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-mkdir -p "$tmp/skill" && ln -s "$here" "$tmp/skill/where-were-we"   # the tests expect <dir>/where-were-we/
+mkdir -p "$tmp/skill" && ln -s "$here/skills/where-were-we" "$tmp/skill/where-were-we"   # the tests expect <dir>/where-were-we/
 fail=0
 for t in "$here"/tests/test_*.sh; do
   printf '%-22s ' "$(basename "$t")"

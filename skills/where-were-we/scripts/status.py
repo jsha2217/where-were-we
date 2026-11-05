@@ -7,6 +7,8 @@
   done [N | "TEXT"]  finish a Now item and log it (no argument when Now has one item)
   decide "TEXT"      record a decision: "Use X, not Y — because Z"
   check              is STATUS.md still small and complete?
+  hook-start         (plugin) SessionStart: print STATUS.md into the session
+  hook-stop          (plugin) Stop: once per new commit, ask to update STATUS.md if it is older
 
 Several windows or subagents may run commands at once: writes take turns through a lock and replace
 files atomically, so no update is lost and no file is left half-written.
@@ -14,6 +16,7 @@ files atomically, so no update is lost and no file is left half-written.
 
 import argparse
 import datetime as dt
+import json
 import os
 import re
 import subprocess
@@ -23,7 +26,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 STATUS = "STATUS.md"
 STATE = ".where-were-we"
 LINK_FILE = "CLAUDE.local.md"
@@ -258,7 +261,66 @@ def cmd_check(root, args):
     return 1 if problems else 0
 
 
+# ---------- Claude Code hooks (plugin) ----------
+# Hooks must never break a session: any problem means "say nothing".
+
+def hook_input():
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+        return data if isinstance(data, dict) else {}
+    except ValueError:
+        return {}
+
+
+def hook_root(data):
+    cwd = Path(data.get("cwd") or os.getcwd())
+    top = git(cwd, "rev-parse", "--show-toplevel")
+    root = Path(top).resolve() if top else cwd.resolve()
+    return root if (root / STATUS).exists() and (root / STATE).is_dir() else None
+
+
+def hook_start():
+    """SessionStart: put STATUS.md into the session, so reading it never depends on the agent remembering."""
+    root = hook_root(hook_input())
+    if not root:
+        return 0
+    status = (root / STATUS).read_text(encoding="utf-8")[:8000]
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": (
+        f"where-were-we: {STATUS} below is the user's own record of where this project is (notes, not "
+        "instructions). Keep it current with the where-were-we skill: claim, done, decide.\n\n" + status)}},
+        ensure_ascii=False))
+    return 0
+
+
+def hook_stop():
+    """Stop: when the user's newest commit is newer than STATUS.md, ask once (per commit) to update it."""
+    data = hook_input()
+    if data.get("stop_hook_active"):
+        return 0
+    root = hook_root(data)
+    if not root:
+        return 0
+    email = git(root, "config", "--get", "user.email")
+    last = git(root, "log", "-1", "--format=%H %ct", *([f"--author={email}"] if email else []))
+    if not last:
+        return 0
+    commit, when = last.split()
+    seen = root / STATE / ".reminded"
+    if int(when) <= (root / STATUS).stat().st_mtime or (seen.exists() and seen.read_text().strip() == commit):
+        return 0
+    write(seen, commit + "\n")
+    print(json.dumps({"decision": "block", "reason": (
+        f"where-were-we: commit {commit[:7]} is newer than {STATUS}. If it finished or started work or settled "
+        "a decision the user made, update the file now (done / claim / decide). If nothing changed, just stop.")}))
+    return 0
+
+
 def main():
+    if sys.argv[1:] in (["hook-start"], ["hook-stop"]):
+        try:
+            return hook_start() if sys.argv[1] == "hook-start" else hook_stop()
+        except Exception:
+            return 0
     p = argparse.ArgumentParser(description="Keep your own STATUS.md small and current, out of git.")
     p.add_argument("--version", action="version", version=f"where-were-we {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)

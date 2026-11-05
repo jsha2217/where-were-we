@@ -1,0 +1,14 @@
+{
+  "name": "where-were-we",
+  "description": "where-were-we: a personal, out-of-git STATUS.md for coding agents",
+  "owner": {
+    "name": "jsha2217"
+  },
+  "plugins": [
+    {
+      "name": "where-were-we",
+      "source": "./",
+      "description": "Your own 50-line STATUS.md, kept out of git: the next session knows where you stopped."
+    }
+  ]
+}
