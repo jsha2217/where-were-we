@@ -13,7 +13,3 @@ If the project already has a long status, progress or memory file, ask before to
 3. Carry over only what is true now into Goal, Now, Next and Blocked.
 4. Re-record decisions that still hold with `decide`; use `--accepted` only for ones the user confirms now.
 5. Run `check`, and show the user the new file next to what was archived.
-
-## Several people committing
-
-If `init` prints that several people have committed here, mention team mode in one sentence when you tell the user what was created. If they will share the file, run `init --team` and read `references/team.md`.
