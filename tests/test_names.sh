@@ -7,7 +7,7 @@ git config --global user.email me@example.com; git config --global user.name me;
 mkdir $T/n1 && cd $T/n1 && git init -q && printf "# Project status\nBeta.\n" > STATUS.md
 for a in a b c; do echo $a>>f; git add -A; git -c user.email=$a@x.io commit -qm $a; done
 out=$($PY init); rc=$?
-ok "N1 init refuses the team's STATUS.md, creates nothing" '[ $rc = 1 ] && echo "$out" | grep -q "repository.s file: leave it" && [ ! -e .where-were-we ]'
+ok "N1 init refuses the team's STATUS.md, creates nothing" '[ $rc = 1 ] && echo "$out" | grep -q "belongs to the repository: leave it" && [ ! -e .where-were-we ]'
 ok "N1 commands refuse before setup, team file untouched" '! $PY claim "x" >/dev/null && ! $PY done --next y >/dev/null && ! $PY decide z >/dev/null && grep -qx Beta. STATUS.md && [ ! -e .where-were-we ]'
 out=$($PY init --path .where-were-we/STATUS.md); rc=$?
 ok "N1 --path works, team file untouched" '[ $rc = 0 ] && [ -f .where-were-we/STATUS.md ] && [ "$(cat STATUS.md)" = "$(printf "# Project status\nBeta.")" ] && [ -z "$(git status --porcelain)" ]'

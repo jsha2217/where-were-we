@@ -1,120 +1,130 @@
 #!/bin/bash
-# Regression tests for where-were-we v0.9.4 fixes
+# Core commands: init, claim/done/release, decisions, offer, check.
 SKILL=$1/where-were-we
 PY="python3 $SKILL/scripts/status.py"
 T=$(mktemp -d "$2/t.XXXX")
 pass=0; fail=0
 ok(){ if eval "$2"; then echo "PASS $1"; pass=$((pass+1)); else echo "FAIL $1"; fail=$((fail+1)); fi; }
 mode(){ stat -f %Lp "$1"; }
+sub(){ python3 -c 'import sys;p,a,b=sys.argv[1:];s=open(p).read();assert a in s,a;open(p,"w").write(s.replace(a,b,1))' "$@"; }
 export HOME=$T/home; mkdir -p $HOME; export XDG_CONFIG_HOME=$HOME/.config
 export GIT_CONFIG_GLOBAL=$HOME/.gitconfig; git config --global user.email t@example.com; git config --global user.name t
+git config --global init.defaultBranch main
 umask 022
 
-# --- 1. permissions + symlink
+# --- 1. permissions, symlinked CLAUDE.local.md
 P=$T/p1; mkdir -p $P && cd $P && git init -q
-printf '# Agents\n' > AGENTS.md; chmod 644 AGENTS.md; ln -s AGENTS.md CLAUDE.md
-printf '* text=auto\n' > .gitattributes; chmod 664 .gitattributes
-$PY init --shared >/dev/null; $PY init --link >/dev/null
-ok "1 AGENTS.md keeps 644" '[ "$(mode AGENTS.md)" = 644 ]'
-ok "1 .gitattributes keeps 664" '[ "$(mode .gitattributes)" = 664 ]'
+printf '# Mine\n' > notes.md; chmod 644 notes.md; ln -s notes.md CLAUDE.local.md
+$PY init --link >/dev/null
 ok "1 new STATUS.md follows umask (644)" '[ "$(mode STATUS.md)" = 644 ]'
-ok "1 CLAUDE.md is still a symlink" '[ -L CLAUDE.md ]'
-ok "1 AGENTS.md got the link block" 'grep -q "where-were-we:start" AGENTS.md'
-ok "1 .git/info/exclude untouched or not 600" '[ ! -e .git/info/exclude ] || [ "$(mode .git/info/exclude)" != 600 ]'
+ok "1 CLAUDE.local.md is still a symlink" '[ -L CLAUDE.local.md ]'
+ok "1 link block written through the symlink, file keeps 644" 'grep -q "where-were-we:start" notes.md && [ "$(mode notes.md)" = 644 ]'
+ok "1 .git/info/exclude not 600" '[ "$(mode .git/info/exclude)" != 600 ]'
+ok "1 no helper copy, no .gitattributes" '[ ! -e .where-were-we/status.py ] && [ ! -e .gitattributes ]'
+ok "1 nothing shows in git status" '[ "$(git status --porcelain)" = "?? notes.md" ]'
+ok "1 CLAUDE.md and AGENTS.md not created" '[ ! -e CLAUDE.md ] && [ ! -e AGENTS.md ]'
 
-# --- 2. sensitive scan
-ed(){ python3 - "$1" "$2" <<'PY'
-import sys,re
-p,item=sys.argv[1:]
-s=open(p).read()
-s=re.sub(r"(## Next\n)", r"\1- "+item.replace("\\","\\\\")+"\n", s,1)
-open(p,"w").write(s)
-PY
-}
-P=$T/p2; mkdir -p $P && cd $P && git init -q && $PY init --shared >/dev/null
-ed STATUS.md 'Switch remote to git@github.com:org/repo.git'
-ed STATUS.md 'Clone ssh://git@github.com/org/repo for CI'
-ok "2 git remotes are not emails" '$PY check --ci >/dev/null'
-ed STATUS.md 'Type `token: string` in api.ts'
-ed STATUS.md 'Run with pwd: /usr/src'
-out=$($PY check --ci); rc=$?
-ok "2 token/pwd only warn, exit 0" '[ $rc = 0 ] && echo "$out" | grep -q "warn:  looks like a password"'
-ed STATUS.md 'Mail john.doe@gmail.com about it'
-out=$($PY check --ci); rc=$?
-ok "2 real email still an error" '[ $rc = 1 ] && echo "$out" | grep -q "email address"'
-ln=$(grep -n "john.doe" STATUS.md | cut -d: -f1)
-out=$($PY allow STATUS.md:$ln)
-ok "3 allow accepted" 'echo "$out" | grep -q "allowed on the user"'
-ok "3 config holds no raw value" '! grep -q john .where-were-we/config.json && grep -q "\"kind\": \"email address\"" .where-were-we/config.json'
-ok "3 check passes after allow" '$PY check --ci >/dev/null'
-ed STATUS.md 'Also bob@corp.io'
-ok "3 a different email still fails" '! $PY check --ci >/dev/null'
-ok "3 allow on a clean line refuses" '! $PY allow STATUS.md:1 >/dev/null'
-ok "3 allow bad spec refuses" '! $PY allow README.md:1 >/dev/null'
-$PY allow --reset >/dev/null
-ln=$(grep -n "bob@" STATUS.md | cut -d: -f1); sed -i '' "${ln}d" STATUS.md
-ok "3 reset brings the error back" '! $PY check --ci >/dev/null'
-ed STATUS.md 'key ghp_abcdefghijklmnopqrstuvwx'
-ok "2 GitHub token is still an error" '$PY check --ci | grep -q "API key"'
+# --- 2. claim / release / done
+mkdir $T/a && cd $T/a && $PY init >/dev/null
+sub STATUS.md "## Next
+- " "## Next
+- first
+- second"
+ok "2 claim N moves Next->Now" '$PY claim 1 | grep -q "now: first (from Next)" && grep -A1 "## Now" STATUS.md | grep -q "\[ \] first" && ! sed -n "/## Next/,/## Blocked/p" STATUS.md | grep -q first'
+ok "2 claim text adds a second Now item" '$PY claim "hotfix" >/dev/null && [ $(sed -n "/## Now/,/## Next/p" STATUS.md | grep -c "\[ \]") = 2 ]'
+ok "2 done with two Now items asks which" '! $PY done >/dev/null'
+ok "2 release puts item back on top of Next" '$PY release 2 | grep -q hotfix && sed -n "/## Next/,/## Blocked/p" STATUS.md | sed -n 2p | grep -q hotfix'
+ok "2 done by text logs it and promotes Next" '$PY done first | grep -q "now: hotfix (from Next)" && grep -q "first" .where-were-we/log/*.md'
+ok "2 done --next starts a new item" '$PY done --next "brand new" >/dev/null && grep -A1 "## Now" STATUS.md | grep -q "brand new"'
+ok "2 done --no-promote leaves Now empty, no nagging while Next has items" 'out=$($PY done --no-promote) && ! echo "$out" | grep -q "empty" && grep -A1 "## Now" STATUS.md | grep -qx -- "- \[ \] "'
+ok "2 ticked item is archived" 'sub STATUS.md "## Now
+- [ ] " "## Now
+- [x] ticked one" && $PY archive | grep -q "archived 1" && grep -q "ticked one" .where-were-we/log/*.md'
 
-# --- 4a hint
-P=$T/p4a; mkdir -p $P && cd $P && printf 'notes\n' > TODO.md
-ok "4a hint points to references/adopting.md" '$PY init | grep -q "references/adopting.md"'
-
-# --- 4b offer with a foreign STATUS.md
-P=$T/p4b; mkdir -p $P && cd $P && printf '# my own notes\n' > STATUS.md
+# --- 3. existing notes, foreign STATUS.md
+P=$T/p3a; mkdir -p $P && cd $P && printf 'notes\n' > TODO.md
+ok "3 hint points to references/adopting.md" '$PY init | grep -q "references/adopting.md"'
+P=$T/p3b; mkdir -p $P && cd $P && printf '# my own notes\n' > STATUS.md
 out=$($PY offer); rc=$?
-ok "4b foreign STATUS.md is offered (exit 0)" '[ $rc = 0 ] && echo "$out" | grep -q "not made by where-were-we"'
-ok "4b init refuses the foreign file" '! $PY init >/dev/null'
+ok "3 foreign STATUS.md is offered (exit 0)" '[ $rc = 0 ] && echo "$out" | grep -q "not made by where-were-we"'
+ok "3 init refuses the foreign file" '! $PY init >/dev/null'
 mkdir -p .where-were-we/log && mv STATUS.md .where-were-we/log/legacy.md && $PY init >/dev/null
-ok "4b set-up folder says exists" '! $PY offer | grep -q "^offer" '
+ok "3 set-up folder says exists" '! $PY offer | grep -q "^offer" '
 
-# --- 4c helper version handling
-P=$T/p4c; mkdir -p $P && cd $P && $PY init >/dev/null
-sed -i '' 's/^VERSION = ".*"/VERSION = "9.9.9"/' .where-were-we/status.py
-out=$($PY init)
-ok "4c newer project copy is kept" 'echo "$out" | grep -q "kept .where-were-we/status.py v9.9.9" && grep -q "9.9.9" .where-were-we/status.py'
-sed -i '' 's/^VERSION = ".*"/VERSION = "0.9.1"/' .where-were-we/status.py
-ok "4c older copy is updated" '$PY init | grep -q "v0.9.1 -> v" && cmp -s .where-were-we/status.py $SKILL/scripts/status.py'
-echo "# tampered" >> .where-were-we/status.py
-ok "4c same version, changed content is replaced" '$PY init | grep -q "replaced .where-were-we/status.py" && cmp -s .where-were-we/status.py $SKILL/scripts/status.py'
-ok "4c identical copy is left alone" '! $PY init | grep -q "status.py (v\|replaced\|updated helper"'
-
-# --- 4d offer in home: no subfolder scan
+# --- 4. offer in home: no subfolder scan
 mkdir -p $HOME/Desktop/proj/.where-were-we && echo '{}' > $HOME/Desktop/proj/.where-were-we/config.json
 cd $HOME && out=$($PY offer)
-ok "4d home says not a project folder (no scan)" 'echo "$out" | grep -q "not a project folder"'
+ok "4 home says not a project folder (no scan)" 'echo "$out" | grep -q "not a project folder"'
 cd $HOME/Desktop && out=$($PY offer)
-ok "4d inside Desktop, its subfolders are searched" 'echo "$out" | grep -q "elsewhere: proj"'
+ok "4 inside Desktop, its subfolders are searched" 'echo "$out" | grep -q "elsewhere: proj"'
 mkdir -p $T/work/app/.where-were-we && echo '{}' > $T/work/app/.where-were-we/config.json
-cd $T/work && ok "4d normal folder still finds subprojects" '$PY offer | grep -q "elsewhere: app"'
+cd $T/work && ok "4 normal folder still finds subprojects" '$PY offer | grep -q "elsewhere: app"'
+mkdir -p $T/hub/proj && cd $T/hub/proj && $PY init >/dev/null && cd $T/hub
+ok "4 offer elsewhere tells to start inside next time" '$PY offer | grep -q "start the agent inside proj next time"'
 
-# --- 4e hand-reworded decisions survive
-P=$T/p4e; mkdir -p $P && cd $P && $PY init >/dev/null
+# --- 5. hand-reworded decisions survive
+P=$T/p5; mkdir -p $P && cd $P && $PY init >/dev/null
 $PY decide "Use Postgres, not SQLite — several writers" >/dev/null
 $PY decide --accepted "Use FastAPI, not Flask — async" >/dev/null
 sed -i '' 's/Use Postgres, not SQLite — several writers/Use Postgres 16, not SQLite — many writers/' STATUS.md
 out=$($PY sync)
-ok "4e sync reports the rewording" 'echo "$out" | grep -q "hand-edited wording of D-001"'
-ok "4e wording kept in STATUS.md" 'grep -q "Postgres 16" STATUS.md'
-ok "4e wording copied to decisions.md" 'grep -q "D-001 (.*) \[proposed\]: Use Postgres 16" .where-were-we/decisions.md'
-ok "4e no duplicate decision created" '[ $(grep -c "^- D-" .where-were-we/decisions.md) = 2 ]'
+ok "5 sync reports the rewording" 'echo "$out" | grep -q "hand-edited wording of D-001"'
+ok "5 wording kept in STATUS.md" 'grep -q "Postgres 16" STATUS.md'
+ok "5 wording copied to decisions.md" 'grep -q "D-001 (.*) \[proposed\]: Use Postgres 16" .where-were-we/decisions.md'
+ok "5 no duplicate decision created" '[ $(grep -c "^- D-" .where-were-we/decisions.md) = 2 ]'
 sed -i '' 's/D-001 \[proposed\]/D-001/' STATUS.md
 out=$($PY sync)
-ok "4e hand-removed [proposed] is reported, not applied" 'echo "$out" | grep -q "tags edited by hand" && grep -q "D-001 \[proposed\]" STATUS.md'
-ok "4e check clean after sync (except proposed notice)" '$PY check --ci >/dev/null'
+ok "5 hand-removed [proposed] is reported, not applied" 'echo "$out" | grep -q "tags edited by hand" && grep -q "D-001 \[proposed\]" STATUS.md'
 $PY decide "Cache with Redis" >/dev/null
-ok "4e decide still works" 'grep -q "D-003 \[proposed\]: Cache with Redis" STATUS.md'
-
-# --- 4e after a union-merge duplicate, no bogus rewording
-P=$T/p4e2; mkdir -p $P && cd $P && $PY init >/dev/null
+ok "5 decide still works" 'grep -q "D-003 \[proposed\]: Cache with Redis" STATUS.md'
+ok "5 pin refuses a proposed decision" '! $PY pin D-3 >/dev/null'
+P=$T/p5b; mkdir -p $P && cd $P && $PY init >/dev/null
 $PY decide "Alpha" >/dev/null
 printf -- '- D-001 (2026-11-05) [proposed]: Beta\n' >> .where-were-we/decisions.md
 out=$($PY sync)
-ok "4e duplicate renumbered, texts unchanged" 'echo "$out" | grep -q "renumbered" && grep -q ": Alpha" .where-were-we/decisions.md && grep -q ": Beta" .where-were-we/decisions.md && ! echo "$out" | grep -q "hand-edited"'
+ok "5 duplicate renumbered, texts unchanged" 'echo "$out" | grep -q "renumbered" && grep -q ": Alpha" .where-were-we/decisions.md && grep -q ": Beta" .where-were-we/decisions.md && ! echo "$out" | grep -q "hand-edited"'
 
-# --- general
-cd $T/p2 && ok "general: done/archive run" '$PY done --no-promote >/dev/null; $PY archive >/dev/null; true'
+# --- 6. older decisions pointer
+mkdir $T/od && cd $T/od && $PY init >/dev/null && for i in 1 2 3 4 5; do $PY decide --accepted "dec $i" >/dev/null; done
+ok "6 older line shows hidden count" 'grep -qx -- "- (+2 older: .where-were-we/decisions.md)" STATUS.md'
+ok "6 older line not captured as a decision" '$PY sync | grep -vq captured && [ $(grep -c "^- D-" .where-were-we/decisions.md) = 5 ]'
+ok "6 check not out of sync with older line" '! $PY check | grep -q "out of sync\|missing from"'
+$PY pin D-1 >/dev/null
+ok "6 pinned counts as shown" 'grep -qx -- "- (+1 older: .where-were-we/decisions.md)" STATUS.md'
+mkdir $T/odk && cd $T/odk && $PY init --ko >/dev/null && for i in 1 2 3 4; do $PY decide "결정 $i" >/dev/null; done
+ok "6 ko older line" 'grep -qx -- "- (이전 결정 1개: .where-were-we/decisions.md)" STATUS.md && ! $PY check | grep -q "out of sync"'
+
+# --- 7. check
+mkdir $T/en && cd $T/en && $PY init >/dev/null
+ok "7 both Now and Next empty -> warn" '$PY check | grep -q "both empty"'
+sub STATUS.md "## Next
+- " "## Next
+- later"
+ok "7 Now empty but Next has items -> no warning" '! $PY check | grep -q "Now"'
+sub STATUS.md "## Blocked
+- (none)" "## Blocked
+- waiting on keys"
+ok "7 ownerless Blocked line warns" '$PY check | grep -q "without an owner"'
+python3 -c 'p="STATUS.md";s=open(p).read();open(p,"w").write(s+"".join("\n- x" for _ in range(40)))'
+ok "7 over 50 lines is an error" '! $PY check >/dev/null'
+
+# --- 8. CRLF
+mkdir $T/w && cd $T/w && $PY init >/dev/null
+python3 -c 's=open("STATUS.md").read().replace("## Now\n- [ ] \n","## Now\n- [ ] w\n").replace("## Next\n- \n","## Next\n- nx\n");open("STATUS.md","wb").write(s.replace("\n","\r\n").encode())'
+$PY done >/dev/null
+ok "8 CRLF kept after done" 'python3 -c "d=open(\"STATUS.md\",\"rb\").read(); import sys; sys.exit(not (d.count(b\"\\r\\n\")==d.count(b\"\\n\") and b\"nx\" in d))"'
+ok "8 LF file stays LF" 'cd $T/a && ! grep -q $(printf "\r") STATUS.md'
+
+# --- 9. commands from a subfolder
+mkdir -p $T/sub/apps/api/src && cd $T/sub && git init -q && $PY init >/dev/null
+cd apps/api/src
+ok "9 claim finds the project" '$PY claim "from sub" | grep -q "(project: ../../..)" && grep -q "from sub" $T/sub/STATUS.md'
+ok "9 offer says exists" '$PY offer | grep -q "^exists"'
+ok "9 init refused, nothing created" '! $PY init >/dev/null && [ ! -e .where-were-we ]'
+ok "9 init --force makes a separate one" '$PY init --force >/dev/null && [ -f .where-were-we/config.json ]'
+mkdir -p $T/outside/deep && cd $T/outside/deep
+ok "9 outside any project: not set up" '$PY claim x | grep -q "not set up"'
+
 echo "== $pass passed, $fail failed"
 rm -rf "$T"
 [ $fail = 0 ]
