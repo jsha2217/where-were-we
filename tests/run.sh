@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run every where-were-we test against this checkout: `bash tests/run.sh`
-# Needs macOS (the tests use BSD sed and stat), git and python3. Each test works in its own temporary
+# Needs git and python3 (macOS or Linux). Each test works in its own temporary
 # HOME and git repositories, so nothing outside a temp folder is touched.
 set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"
