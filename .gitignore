@@ -1,6 +1,2 @@
 __pycache__/
 .DS_Store
-*.skill
-# local review notes, not part of the skill
-SKILL-for-review.md
-where-were-we-overview.md
