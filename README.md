@@ -1,5 +1,7 @@
 # where-were-we
 
+**English** | [한국어](README.ko.md)
+
 Your own `STATUS.md`, kept out of git, so the next coding-agent session knows where you stopped.
 
 Agents forget everything between sessions. A growing notes file soon costs thousands of tokens and drifts out of date. where-were-we keeps **one short file (max 50 lines)** that says where your work is *now*. Finished work and decisions go to side files you open only when you need them.
