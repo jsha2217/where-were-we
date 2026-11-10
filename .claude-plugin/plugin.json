@@ -1,7 +1,7 @@
 {
   "name": "where-were-we",
-  "version": "0.12.0",
-  "description": "Your own 50-line STATUS.md, kept out of git: the next session knows where you stopped. One Python file, no database.",
+  "version": "0.13.0",
+  "description": "A 50-line STATUS.md for the next session or person. Keep notes local or share them through Git. One Python file, no database.",
   "author": {
     "name": "jsha2217"
   },

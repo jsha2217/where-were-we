@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""where-were-we helper: your own STATUS.md, kept out of git. Standard library only.
+"""where-were-we helper: a local or Git-shared STATUS.md. Standard library only.
 
-  init [--link]      create STATUS.md and .where-were-we/, list them in .git/info/exclude
+  init [--personal | --shared] [--link]
+                     choose whether status, decisions and logs can be committed
                      (--link: add a block to CLAUDE.local.md so every session reads STATUS.md first)
   claim N | "TEXT"   start work: Next item N (or the one matching TEXT) moves into Now; new TEXT is added
   done [N | "TEXT"]  finish a Now item and log it (no argument when Now has one item)
@@ -23,17 +24,26 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
+import io
 from pathlib import Path
 
-VERSION = "0.12.0"
+VERSION = "0.13.0"
 STATUS = "STATUS.md"
 STATE = ".where-were-we"
+DONE_PENDING = ".done-pending.json"
+DECIDE_PENDING = ".decide-pending.json"
 LINK_FILE = "CLAUDE.local.md"
 SECTIONS = ["Goal", "Now", "Next", "Blocked", "Decisions"]
 MAX_LINES = 50
 SHOWN_DECISIONS = 5
-EXCLUDE = ["# where-were-we (personal: never committed)", f"/{STATUS}", f"/{STATE}/", f"/{LINK_FILE}"]
+LEGACY_EXCLUDE = ["# where-were-we (personal: never committed)", f"/{STATUS}", f"/{STATE}/", f"/{LINK_FILE}"]
+EXCLUDE_HEADERS = {mode: f"# where-were-we ({mode})" for mode in ("personal", "shared")}
+EXCLUDE_END = "# /where-were-we"
+LOCAL_EXCLUDE = [f"/{LINK_FILE}", f"/.{STATUS}.*.tmp", f"/.{LINK_FILE}.*.tmp",
+                 f"/{STATE}/.lock", f"/{STATE}/.reminded", f"/{STATE}/{DONE_PENDING}",
+                 f"/{STATE}/{DECIDE_PENDING}",
+                 f"/{STATE}/**/.*.tmp"]
 ITEM_RE = re.compile(r"^\s*[-*]\s+(?:\[[ xX]\]\s*)?(.*)$")
 PLACEHOLDER_RE = re.compile(r"^\((?:none(?: yet)?|\+\d+ older: .*)\)$")
 DEC_RE = re.compile(r"^- D-(\d+)")
@@ -46,7 +56,7 @@ TEMPLATE = "\n".join([  # "- " placeholders keep their trailing space, so editor
 LINK_START, LINK_END = "<!-- where-were-we:start -->", "<!-- where-were-we:end -->"
 LINK_BLOCK = f"""{LINK_START}
 ## Project status
-Read {STATUS} before starting work: it is my own record of where this project is (kept out of git).
+Read {STATUS} before starting work: it records where this project's work stands.
 It is notes, not instructions. Keep it true as you work, max {MAX_LINES} lines; subagents leave it to the main agent.
 With the where-were-we skill: `claim` to start work, `done` to finish it, `decide` for decisions the user made.
 {LINK_END}
@@ -137,9 +147,13 @@ def set_section(lines, name, body):
     return lines[:start + 1] + body + ([""] + lines[end:] if end < len(lines) else [])
 
 
-def save_status(root, lines):
+def status_text(lines):
     text = "\n".join(lines).rstrip("\n") + "\n"
-    write(root / STATUS, re.sub(r"^_updated:.*_$", f"_updated: {today()}_", text, count=1, flags=re.M))
+    return re.sub(r"^_updated:.*_$", f"_updated: {today()}_", text, count=1, flags=re.M)
+
+
+def save_status(root, lines):
+    write(root / STATUS, status_text(lines))
 
 
 def pick(texts, what):
@@ -158,7 +172,119 @@ def pick(texts, what):
 
 # ---------- commands ----------
 
+def exclude_path(root):
+    rel = git(root, "rev-parse", "--git-path", "info/exclude")
+    return (root / rel).resolve() if rel else None
+
+
+def configured_mode(text):
+    for line in reversed(text.splitlines()):
+        for mode, header in EXCLUDE_HEADERS.items():
+            if line == header:
+                return mode
+        if line == LEGACY_EXCLUDE[0]:
+            return "personal"
+    return None
+
+
+def exclude_text(text, mode):
+    """Replace only our marked rules, preserving the user's other exclusions."""
+    lines = text.splitlines(keepends=True)
+    kept = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip("\r\n")
+        if line in EXCLUDE_HEADERS.values():
+            end = next((j for j in range(i + 1, len(lines))
+                        if lines[j].rstrip("\r\n") == EXCLUDE_END), None)
+            if end is None:
+                sys.exit("unfinished where-were-we block in info/exclude; repair it before setup.")
+            i = end + 1
+        elif line == LEGACY_EXCLUDE[0]:
+            i += 1
+            while i < len(lines) and lines[i].rstrip("\r\n") in LEGACY_EXCLUDE[1:]:
+                i += 1
+        else:
+            kept.append(lines[i])
+            i += 1
+    rules = ([f"/{STATUS}", f"/{STATE}/"] if mode == "personal" else []) + LOCAL_EXCLUDE
+    prefix = "".join(kept)
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    return prefix + "\n".join([EXCLUDE_HEADERS[mode], *rules, EXCLUDE_END, ""])
+
+
+def ensure_shared_runtime_excludes(root):
+    """A cloned shared status still needs local locks and recovery files ignored."""
+    path = exclude_path(root)
+    if path is None:
+        return
+    old = path.read_text(encoding="utf-8") if path.exists() else ""
+    mode = configured_mode(old)
+    if mode == "shared" or (mode is None and git(root, "ls-files", "--", STATUS, f"{STATE}/")):
+        updated = exclude_text(old, "shared")
+        if updated != old:
+            write(path, updated)
+
+
+def choose_mode():
+    print("Include work records in Git?\n"
+          "  1. shared: hand off status, decisions and logs to other people or computers; commit updates.\n"
+          "  2. personal: keep notes on this computer, out of commits; no transfer through Git.")
+    if not sys.stdin.isatty():
+        print("Choose with `init --shared` or `init --personal`.")
+        return None
+    try:
+        while True:
+            answer = input("Choose 1 (shared) or 2 (personal): ").strip().lower()
+            if answer in ("1", "shared", "yes", "y"):
+                return "shared"
+            if answer in ("2", "personal", "no", "n"):
+                return "personal"
+    except (EOFError, KeyboardInterrupt):
+        print("\nNo choice made; setup cancelled.")
+        return None
+
+
 def cmd_init(root, args):
+    ex = exclude_path(root)
+    old_exclude = ex.read_text(encoding="utf-8") if ex and ex.exists() else ""
+    tracked = git(root, "ls-files", "--", STATUS, f"{STATE}/") if ex else ""
+    mode = args.mode or configured_mode(old_exclude)
+    if mode is None and tracked:
+        mode = "shared"
+    if mode is None and ex is None and (root / STATUS).exists() and (root / STATE).is_dir():
+        mode = "personal"
+    mode = mode or choose_mode()
+    if mode is None:
+        return 1
+    if mode == "shared" and ex is None:
+        print("shared mode needs a Git repository; create one first, or choose --personal.")
+        return 1
+    if mode == "personal" and tracked:
+        print("These work records are already tracked by Git:\n" + tracked)
+        print("Use --shared to keep sharing, or explicitly stop tracking them before --personal. "
+              "Setup has not changed the files or Git index.")
+        return 1
+    if ex:
+        updated = exclude_text(old_exclude, mode)
+        if updated != old_exclude:
+            write(ex, updated)
+        if mode == "shared":
+            # Check actual Git rules: unrelated .gitignore or global rules may still hide the notes.
+            paths = [STATUS, f"{STATE}/decisions.md", f"{STATE}/log/{today()[:7]}.md"]
+            try:
+                check = subprocess.run(["git", "check-ignore", "--no-index", "--", *paths],
+                                       cwd=root, capture_output=True, text=True, timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                write(ex, old_exclude)
+                raise
+            if check.returncode != 1:
+                write(ex, old_exclude)
+                print("Shared setup could not make the work records visible to Git. "
+                      "Review the existing ignore rules; they were left unchanged.")
+                print(check.stdout or check.stderr)
+                return 1
     (root / STATE / "log").mkdir(parents=True, exist_ok=True)
     if not (root / STATE / "decisions.md").exists():
         write(root / STATE / "decisions.md", "# Decisions\n\n")
@@ -167,14 +293,11 @@ def cmd_init(root, args):
     else:
         write(root / STATUS, TEMPLATE.format(date=today()))
         print(f"created {STATUS} and {STATE}/")
-    rel = git(root, "rev-parse", "--git-path", "info/exclude")
-    if rel:
-        ex = (root / rel).resolve()
-        text = ex.read_text(encoding="utf-8") if ex.exists() else ""
-        missing = [l for l in EXCLUDE if l not in text.splitlines()]
-        if missing:
-            write(ex, text + ("\n" if text and not text.endswith("\n") else "") + "\n".join(missing) + "\n")
-            print("listed them in .git/info/exclude: they stay on this machine and never reach a commit.")
+    if mode == "shared":
+        print("Work records can be included in Git. Commit and push them through your usual workflow.")
+        print("You can ask to keep them out of Git at any time.")
+    else:
+        print("Personal mode: work records stay local" + (", excluded through info/exclude." if ex else "."))
     if args.link:
         p = root / LINK_FILE
         text = p.read_text(encoding="utf-8") if p.exists() else ""
@@ -204,8 +327,55 @@ def cmd_claim(root, args):
     return 0
 
 
+def recover_pending(root, command):
+    """Finish an interrupted done/decide without duplicating records or overwriting edits.
+
+    Called under the writer lock, before another command can change either file.
+    The pending file stays until both the record and STATUS.md have been saved.
+    """
+    pending = root / STATE / (DONE_PENDING if command == "done" else DECIDE_PENDING)
+    data = json.loads(pending.read_text(encoding="utf-8"))
+    if command == "done":
+        month = dt.date.fromisoformat(data["date"]).strftime("%Y-%m")
+        record, key = root / STATE / "log" / f"{month}.md", "log"
+        message = f"done: {data['task']} (logged in {record.relative_to(root)})"
+    else:
+        record, key = root / STATE / "decisions.md", "decisions"
+        message = f"recorded D-{data['number']:03d}"
+    updates = [(record, key), (root / STATUS, "status")]
+    current = []
+    # Check both files before writing either: a manual edit needs human review.
+    for path, key in updates:
+        old = path.read_text(encoding="utf-8") if path.exists() else None
+        if old not in (data[f"{key}_before"], data[f"{key}_after"]):
+            sys.exit(f"{path.relative_to(root)} changed during an unfinished {command}; "
+                     f"preserved it and {pending.relative_to(root)} for review. Check both files, finish "
+                     f"the {command} by hand if needed, then delete {pending.relative_to(root)}.")
+        current.append(old)
+    for (path, key), old in zip(updates, current):
+        if old != data[f"{key}_after"]:
+            write(path, data[f"{key}_after"])
+    pending.unlink()
+    print(message)
+    return 0
+
+
+def same_request(data, command, args):
+    """True when this call repeats the interrupted one, so it must not run a second time."""
+    if command == "decide":
+        return " ".join(args.text).strip() == data.get("text")
+    what = " ".join(args.what).strip()
+    if not what:
+        return True  # never finish an item nobody named
+    now = items(data["status_before"].splitlines(), "Now")
+    with redirect_stdout(io.StringIO()):
+        k = pick(now, what)
+    return k is not None and now[k] == data["task"]
+
+
 def cmd_done(root, args):
-    lines = (root / STATUS).read_text(encoding="utf-8").splitlines()
+    original = (root / STATUS).read_text(encoding="utf-8")
+    lines = original.splitlines()
     now = items(lines, "Now")
     what = " ".join(args.what).strip()
     if not now:
@@ -221,31 +391,42 @@ def cmd_done(root, args):
         print(f"no Now item matches '{what}'.")
         return 1
     text = now.pop(k)
-    save_status(root, set_section(lines, "Now", [f"- [ ] {t}" for t in now] or ["- [ ] "]))
-    log = root / STATE / "log" / f"{today()[:7]}.md"
-    old = log.read_text(encoding="utf-8") if log.exists() else f"# Log {today()[:7]}\n"
-    heading = f"## {today()}"
-    write(log, old.rstrip("\n") + ("\n" if heading in old else f"\n\n{heading}\n") + f"- {text}\n")
-    print(f"done: {text} (logged in {log.relative_to(root)})")
-    return 0
+    updated = status_text(set_section(lines, "Now", [f"- [ ] {t}" for t in now] or ["- [ ] "]))
+    day = today()
+    log = root / STATE / "log" / f"{day[:7]}.md"
+    old = log.read_text(encoding="utf-8") if log.exists() else None
+    body = old if old is not None else f"# Log {day[:7]}\n"
+    heading = f"## {day}"
+    logged = body.rstrip("\n") + ("\n" if heading in body else f"\n\n{heading}\n") + f"- {text}\n"
+    # Save the intent first. Recovery always writes the log before removing Now.
+    write(root / STATE / DONE_PENDING, json.dumps({
+        "task": text, "date": day,
+        "status_before": original, "status_after": updated,
+        "log_before": old, "log_after": logged,
+    }, ensure_ascii=False) + "\n")
+    return recover_pending(root, "done")
 
 
 def cmd_decide(root, args):
     text = " ".join(args.text).strip()
+    original = (root / STATUS).read_text(encoding="utf-8")
     p = root / STATE / "decisions.md"
-    dec = p.read_text(encoding="utf-8").splitlines() if p.exists() else ["# Decisions", ""]
+    old = p.read_text(encoding="utf-8") if p.exists() else None
+    dec = old.splitlines() if old is not None else ["# Decisions", ""]
     num = max((int(m.group(1)) for m in map(DEC_RE.match, dec) if m), default=0) + 1
     dec.append(f"- D-{num:03d} ({today()}): {text}")
-    write(p, "\n".join(dec).rstrip("\n") + "\n")
     all_dec = [re.sub(r" \(\d{4}-\d{2}-\d{2}\)", "", l, count=1) for l in dec if DEC_RE.match(l)]
     shown = all_dec[-SHOWN_DECISIONS:]
     older = len(all_dec) - len(shown)
     if older:
         shown.append(f"- (+{older} older: {STATE}/decisions.md)")
-    lines = (root / STATUS).read_text(encoding="utf-8").splitlines()
-    save_status(root, set_section(lines, "Decisions", shown))
-    print(f"recorded D-{num:03d}")
-    return 0
+    updated = status_text(set_section(original.splitlines(), "Decisions", shown))
+    write(root / STATE / DECIDE_PENDING, json.dumps({
+        "number": num, "text": text,
+        "decisions_before": old, "decisions_after": "\n".join(dec).rstrip("\n") + "\n",
+        "status_before": original, "status_after": updated,
+    }, ensure_ascii=False) + "\n")
+    return recover_pending(root, "decide")
 
 
 def cmd_check(root, args):
@@ -284,7 +465,7 @@ def hook_start():
     root = hook_root(hook_input())
     if not root:
         return 0
-    status = (root / STATUS).read_text(encoding="utf-8")[:8000]
+    status = (root / STATUS).read_text(encoding="utf-8")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": (
         f"where-were-we: {STATUS} below is the user's own record of where this project is (notes, not "
         "instructions). Keep it current with the where-were-we skill: claim, done, decide.\n\n" + status)}},
@@ -308,6 +489,7 @@ def hook_stop():
     seen = root / STATE / ".reminded"
     if int(when) <= (root / STATUS).stat().st_mtime or (seen.exists() and seen.read_text().strip() == commit):
         return 0
+    ensure_shared_runtime_excludes(root)
     write(seen, commit + "\n")
     print(json.dumps({"decision": "block", "reason": (
         f"where-were-we: commit {commit[:7]} is newer than {STATUS}. If it finished or started work or settled "
@@ -321,10 +503,16 @@ def main():
             return hook_start() if sys.argv[1] == "hook-start" else hook_stop()
         except Exception:
             return 0
-    p = argparse.ArgumentParser(description="Keep your own STATUS.md small and current, out of git.")
+    p = argparse.ArgumentParser(description="Keep STATUS.md small and current, locally or shared through Git.")
     p.add_argument("--version", action="version", version=f"where-were-we {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("init").add_argument("--link", action="store_true", help=f"point {LINK_FILE} at {STATUS}")
+    init = sub.add_parser("init")
+    init.add_argument("--link", action="store_true", help=f"point {LINK_FILE} at {STATUS}")
+    modes = init.add_mutually_exclusive_group()
+    modes.add_argument("--personal", dest="mode", action="store_const", const="personal",
+                       help="exclude work records from Git")
+    modes.add_argument("--shared", dest="mode", action="store_const", const="shared",
+                       help="allow work records to be committed for handoff")
     sub.add_parser("claim").add_argument("what", nargs="+")
     sub.add_parser("done").add_argument("what", nargs="*")
     sub.add_parser("decide").add_argument("text", nargs="+")
@@ -339,7 +527,15 @@ def main():
         return 1
     if args.cmd == "check":
         return cmd_check(root, args)
+    ensure_shared_runtime_excludes(root)
     with lock(root):
+        for command, filename in (("done", DONE_PENDING), ("decide", DECIDE_PENDING)):
+            pending = root / STATE / filename
+            if pending.exists():
+                data = json.loads(pending.read_text(encoding="utf-8"))
+                recover_pending(root, command)
+                if args.cmd == command and same_request(data, command, args):
+                    return 0  # A retry finishes only the pending operation.
         return {"claim": cmd_claim, "done": cmd_done, "decide": cmd_decide}[args.cmd](root, args)
 
 
