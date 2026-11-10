@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""where-were-we helper: a local or Git-shared STATUS.md. Standard library only.
+"""where-were-we helper: a STATUS.md kept local or committed to Git. Standard library only.
 
-  init [--personal | --shared] [--link]
+  init [--local | --git] [--link]
                      choose whether status, decisions and logs can be committed
                      (--link: add a block to CLAUDE.local.md so every session reads STATUS.md first)
   claim N | "TEXT"   start work: Next item N (or the one matching TEXT) moves into Now; new TEXT is added
@@ -38,7 +38,9 @@ SECTIONS = ["Goal", "Now", "Next", "Blocked", "Decisions"]
 MAX_LINES = 50
 SHOWN_DECISIONS = 5
 LEGACY_EXCLUDE = ["# where-were-we (personal: never committed)", f"/{STATUS}", f"/{STATE}/", f"/{LINK_FILE}"]
-EXCLUDE_HEADERS = {mode: f"# where-were-we ({mode})" for mode in ("personal", "shared")}
+EXCLUDE_HEADERS = {mode: f"# where-were-we ({mode})" for mode in ("local", "git")}
+# Headers written by 0.13.0 before the modes were renamed; still read, replaced on the next init.
+OLD_HEADERS = {"# where-were-we (personal)": "local", "# where-were-we (shared)": "git"}
 EXCLUDE_END = "# /where-were-we"
 LOCAL_EXCLUDE = [f"/{LINK_FILE}", f"/.{STATUS}.*.tmp", f"/.{LINK_FILE}.*.tmp",
                  f"/{STATE}/.lock", f"/{STATE}/.reminded", f"/{STATE}/{DONE_PENDING}",
@@ -182,8 +184,10 @@ def configured_mode(text):
         for mode, header in EXCLUDE_HEADERS.items():
             if line == header:
                 return mode
+        if line in OLD_HEADERS:
+            return OLD_HEADERS[line]
         if line == LEGACY_EXCLUDE[0]:
-            return "personal"
+            return "local"
     return None
 
 
@@ -194,7 +198,7 @@ def exclude_text(text, mode):
     i = 0
     while i < len(lines):
         line = lines[i].rstrip("\r\n")
-        if line in EXCLUDE_HEADERS.values():
+        if line in EXCLUDE_HEADERS.values() or line in OLD_HEADERS:
             end = next((j for j in range(i + 1, len(lines))
                         if lines[j].rstrip("\r\n") == EXCLUDE_END), None)
             if end is None:
@@ -207,40 +211,40 @@ def exclude_text(text, mode):
         else:
             kept.append(lines[i])
             i += 1
-    rules = ([f"/{STATUS}", f"/{STATE}/"] if mode == "personal" else []) + LOCAL_EXCLUDE
+    rules = ([f"/{STATUS}", f"/{STATE}/"] if mode == "local" else []) + LOCAL_EXCLUDE
     prefix = "".join(kept)
     if prefix and not prefix.endswith("\n"):
         prefix += "\n"
     return prefix + "\n".join([EXCLUDE_HEADERS[mode], *rules, EXCLUDE_END, ""])
 
 
-def ensure_shared_runtime_excludes(root):
-    """A cloned shared status still needs local locks and recovery files ignored."""
+def ensure_git_runtime_excludes(root):
+    """A cloned, committed status still needs local locks and recovery files ignored."""
     path = exclude_path(root)
     if path is None:
         return
     old = path.read_text(encoding="utf-8") if path.exists() else ""
     mode = configured_mode(old)
-    if mode == "shared" or (mode is None and git(root, "ls-files", "--", STATUS, f"{STATE}/")):
-        updated = exclude_text(old, "shared")
+    if mode == "git" or (mode is None and git(root, "ls-files", "--", STATUS, f"{STATE}/")):
+        updated = exclude_text(old, "git")
         if updated != old:
             write(path, updated)
 
 
 def choose_mode():
     print("Include work records in Git?\n"
-          "  1. shared: hand off status, decisions and logs to other people or computers; commit updates.\n"
-          "  2. personal: keep notes on this computer, out of commits; no transfer through Git.")
+          "  1. git: commit them; other people and computers pick up status, decisions and logs.\n"
+          "  2. local: keep them on this computer only, never in a commit.")
     if not sys.stdin.isatty():
-        print("Choose with `init --shared` or `init --personal`.")
+        print("Choose with `init --git` or `init --local`.")
         return None
     try:
         while True:
-            answer = input("Choose 1 (shared) or 2 (personal): ").strip().lower()
-            if answer in ("1", "shared", "yes", "y"):
-                return "shared"
-            if answer in ("2", "personal", "no", "n"):
-                return "personal"
+            answer = input("Choose 1 (git) or 2 (local): ").strip().lower()
+            if answer in ("1", "git", "yes", "y"):
+                return "git"
+            if answer in ("2", "local", "no", "n"):
+                return "local"
     except (EOFError, KeyboardInterrupt):
         print("\nNo choice made; setup cancelled.")
         return None
@@ -252,25 +256,25 @@ def cmd_init(root, args):
     tracked = git(root, "ls-files", "--", STATUS, f"{STATE}/") if ex else ""
     mode = args.mode or configured_mode(old_exclude)
     if mode is None and tracked:
-        mode = "shared"
+        mode = "git"
     if mode is None and ex is None and (root / STATUS).exists() and (root / STATE).is_dir():
-        mode = "personal"
+        mode = "local"
     mode = mode or choose_mode()
     if mode is None:
         return 1
-    if mode == "shared" and ex is None:
-        print("shared mode needs a Git repository; create one first, or choose --personal.")
+    if mode == "git" and ex is None:
+        print("--git needs a Git repository; create one first, or choose --local.")
         return 1
-    if mode == "personal" and tracked:
+    if mode == "local" and tracked:
         print("These work records are already tracked by Git:\n" + tracked)
-        print("Use --shared to keep sharing, or explicitly stop tracking them before --personal. "
+        print("Use --git to keep committing them, or explicitly stop tracking them before --local. "
               "Setup has not changed the files or Git index.")
         return 1
     if ex:
         updated = exclude_text(old_exclude, mode)
         if updated != old_exclude:
             write(ex, updated)
-        if mode == "shared":
+        if mode == "git":
             # Check actual Git rules: unrelated .gitignore or global rules may still hide the notes.
             paths = [STATUS, f"{STATE}/decisions.md", f"{STATE}/log/{today()[:7]}.md"]
             try:
@@ -281,7 +285,7 @@ def cmd_init(root, args):
                 raise
             if check.returncode != 1:
                 write(ex, old_exclude)
-                print("Shared setup could not make the work records visible to Git. "
+                print("--git setup could not make the work records visible to Git. "
                       "Review the existing ignore rules; they were left unchanged.")
                 print(check.stdout or check.stderr)
                 return 1
@@ -293,11 +297,11 @@ def cmd_init(root, args):
     else:
         write(root / STATUS, TEMPLATE.format(date=today()))
         print(f"created {STATUS} and {STATE}/")
-    if mode == "shared":
+    if mode == "git":
         print("Work records can be included in Git. Commit and push them through your usual workflow.")
         print("You can ask to keep them out of Git at any time.")
     else:
-        print("Personal mode: work records stay local" + (", excluded through info/exclude." if ex else "."))
+        print("Local mode: work records stay on this computer" + (", excluded through info/exclude." if ex else "."))
     if args.link:
         p = root / LINK_FILE
         text = p.read_text(encoding="utf-8") if p.exists() else ""
@@ -489,7 +493,7 @@ def hook_stop():
     seen = root / STATE / ".reminded"
     if int(when) <= (root / STATUS).stat().st_mtime or (seen.exists() and seen.read_text().strip() == commit):
         return 0
-    ensure_shared_runtime_excludes(root)
+    ensure_git_runtime_excludes(root)
     write(seen, commit + "\n")
     print(json.dumps({"decision": "block", "reason": (
         f"where-were-we: commit {commit[:7]} is newer than {STATUS}. If it finished or started work or settled "
@@ -503,16 +507,16 @@ def main():
             return hook_start() if sys.argv[1] == "hook-start" else hook_stop()
         except Exception:
             return 0
-    p = argparse.ArgumentParser(description="Keep STATUS.md small and current, locally or shared through Git.")
+    p = argparse.ArgumentParser(description="Keep STATUS.md small and current, kept local or committed to Git.")
     p.add_argument("--version", action="version", version=f"where-were-we {VERSION}")
     sub = p.add_subparsers(dest="cmd", required=True)
     init = sub.add_parser("init")
     init.add_argument("--link", action="store_true", help=f"point {LINK_FILE} at {STATUS}")
     modes = init.add_mutually_exclusive_group()
-    modes.add_argument("--personal", dest="mode", action="store_const", const="personal",
+    modes.add_argument("--local", dest="mode", action="store_const", const="local",
                        help="exclude work records from Git")
-    modes.add_argument("--shared", dest="mode", action="store_const", const="shared",
-                       help="allow work records to be committed for handoff")
+    modes.add_argument("--git", dest="mode", action="store_const", const="git",
+                       help="let work records be committed for handoff")
     sub.add_parser("claim").add_argument("what", nargs="+")
     sub.add_parser("done").add_argument("what", nargs="*")
     sub.add_parser("decide").add_argument("text", nargs="+")
@@ -527,7 +531,7 @@ def main():
         return 1
     if args.cmd == "check":
         return cmd_check(root, args)
-    ensure_shared_runtime_excludes(root)
+    ensure_git_runtime_excludes(root)
     with lock(root):
         for command, filename in (("done", DONE_PENDING), ("decide", DECIDE_PENDING)):
             pending = root / STATE / filename

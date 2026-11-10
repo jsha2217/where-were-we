@@ -1,11 +1,11 @@
 ---
 name: where-were-we
-description: Keeps a tiny, always-current STATUS.md in a code project, locally or shared through Git, so the next session or person picks up where work stopped. Plain markdown, no server or database. Use when the user asks to set it up or resumes work ("where were we", "어디까지 했지", "이어서 하자", "어제 하던 거"); in a project that has STATUS.md, also when they finish a task, make a design decision, get blocked or wrap up. Not for general questions or chat.
+description: Keeps a tiny, always-current STATUS.md in a code project, kept local or committed to Git, so the next session or person picks up where work stopped. Plain markdown, no server or database. Use when the user asks to set it up or resumes work ("where were we", "어디까지 했지", "이어서 하자", "어제 하던 거"); in a project that has STATUS.md, also when they finish a task, make a design decision, get blocked or wrap up. Not for general questions or chat.
 ---
 
 # where-were-we
 
-Agents forget everything between sessions. A growing notes file soon costs thousands of tokens and drifts out of date. This skill keeps one short file that says where work is now; finished work and decisions go to files you open only when needed. At setup, the user chooses personal notes kept out of Git or shared records for handoff through Git.
+Agents forget everything between sessions. A growing notes file soon costs thousands of tokens and drifts out of date. This skill keeps one short file that says where work is now; finished work and decisions go to files you open only when needed. At setup, the user chooses whether the records stay on this computer or go into Git for handoff.
 
 ```
 STATUS.md                       # current state only, max 50 lines
@@ -17,7 +17,7 @@ Run `python3 "${CLAUDE_SKILL_DIR}/scripts/status.py" <command>` (this skill's fo
 
 | When | Command |
 |---|---|
-| The user asks to set it up | Explain Git choices, then `init --personal` or `init --shared` (plain skill: add `--link`) |
+| The user asks to set it up | Explain the Git choice, then `init --local` or `init --git` (plain skill: add `--link`) |
 | Work starts (from Next, or new) | `claim 2` or `claim "OAuth"` |
 | A piece of work is finished | `done` (or `done "OAuth"` with several Now items) |
 | The user makes or confirms a decision | `decide "Use X, not Y — because Z"` |
@@ -29,13 +29,13 @@ Edit Goal, Next and Blocked by hand. Change Now only through `claim` and `done`;
 
 Set it up only when the user asks. If they ask "where were we" in a project without it, answer from commits and code, then mention in one sentence that you can keep a short status file for next time.
 
-For first setup, ask once in the user's language: "Include work records in Git?" Explain both choices together: **shared** lets other people or computers pick up status, decisions and completed work after commits and pushes; updates need to be committed. **Personal** keeps notes on this computer, out of commits; Git will not transfer them. Use an already stated choice without asking again. Apply the choice to STATUS.md, decisions and completion logs with `init --shared` or `init --personal`. Shared setup makes records available for the normal Git workflow; it does not stage, commit or push them. After shared setup, briefly say: "You can ask to keep these records out of Git at any time."
+For first setup, ask once in the user's language: "Include work records in Git?" Explain both choices together: **git** lets other people or computers pick up status, decisions and completed work after commits and pushes; updates need to be committed. **local** keeps the records on this computer, out of commits; Git will not transfer them. Use an already stated choice without asking again. Apply the choice to STATUS.md, decisions and completion logs with `init --git` or `init --local`. `--git` makes records available for the normal Git workflow; it does not stage, commit or push them. After `--git` setup, briefly say: "You can ask to keep these records out of Git at any time."
 
-An existing setup keeps its choice when `init` is rerun; do not ask on every session. Personal setup refuses records already tracked by Git. For a later request to switch to personal, explain that past commits remain; stop tracking only the work records while keeping their working files when the user has requested that change, then run `init --personal`. Never rewrite Git history as part of this setting. Shared setup removes only this skill's exclusion rules and reports other ignore rules that still hide the records.
+An existing setup keeps its choice when `init` is rerun; do not ask on every session. `--local` refuses records already tracked by Git. For a later request to keep them out of Git, explain that past commits remain; stop tracking only the work records while keeping their working files when the user has requested that change, then run `init --local`. Never rewrite Git history as part of this setting. `--git` removes only this skill's exclusion rules and reports other ignore rules that still hide the records.
 
 Installed as the Claude Code plugin, the session-start hook shows STATUS.md and the stop hook reminds the agent to update it after a new commit. Installed as a plain skill, add `--link` to the chosen init command: it links `CLAUDE.local.md` to STATUS.md; if that file exists, ask before editing it. Then fill in Goal (ask if unclear). If the project already has notes (PROGRESS.md, TODO.md), ask before moving anything into STATUS.md.
 
-To remove it, after the user confirms: delete STATUS.md and `.where-were-we/` (decisions and logs go too), the block between the `where-were-we` markers in `CLAUDE.local.md`, and this skill's marked block in `.git/info/exclude`. Shared records may be tracked: their removal follows the project's normal commit workflow.
+To remove it, after the user confirms: delete STATUS.md and `.where-were-we/` (decisions and logs go too), the block between the `where-were-we` markers in `CLAUDE.local.md`, and this skill's marked block in `.git/info/exclude`. With `--git`, records may be tracked: their removal follows the project's normal commit workflow.
 
 ## Reading
 

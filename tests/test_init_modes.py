@@ -70,14 +70,14 @@ class InitModeTests(unittest.TestCase):
     def test_new_noninteractive_init_needs_choice_without_creating_files(self):
         original = self.ex.read_bytes()
         out = self.cli("init", success=False).stdout
-        self.assertIn("--personal", out)
-        self.assertIn("--shared", out)
+        self.assertIn("--local", out)
+        self.assertIn("--git", out)
         self.assertFalse((self.root / status.STATUS).exists())
         self.assertFalse((self.root / status.STATE).exists())
         self.assertEqual(self.ex.read_bytes(), original)
 
     def test_interactive_choice_requires_an_answer_and_supports_both_modes(self):
-        for answer, expected in (("1", "shared"), ("2", "personal")):
+        for answer, expected in (("1", "git"), ("2", "local")):
             with self.subTest(mode=expected), contextlib.redirect_stdout(io.StringIO()):
                 with patch.object(status.sys, "stdin", SimpleNamespace(isatty=lambda: True)):
                     with patch("builtins.input", side_effect=["", answer]) as prompt:
@@ -85,7 +85,7 @@ class InitModeTests(unittest.TestCase):
                         self.assertEqual(prompt.call_count, 2)
 
     def test_personal_records_and_link_stay_out_of_commits(self):
-        self.cli("init", "--personal", "--link")
+        self.cli("init", "--local", "--link")
         self.make_log()
         for name in self.record_paths() + [status.LINK_FILE]:
             self.assertTrue(self.ignored(name), name)
@@ -93,7 +93,7 @@ class InitModeTests(unittest.TestCase):
         self.assertEqual(self.git("ls-files"), "")
 
     def test_shared_records_are_visible_without_staging_or_committing(self):
-        out = self.cli("init", "--shared", "--link").stdout
+        out = self.cli("init", "--git", "--link").stdout
         self.assertIn("at any time", out)
         self.make_log()
         for name in self.record_paths():
@@ -104,7 +104,7 @@ class InitModeTests(unittest.TestCase):
         self.assertEqual(self.git("for-each-ref", "--format=%(refname)", "refs/heads/"), "")
 
     def test_shared_runtime_files_are_excluded_from_git_add(self):
-        self.cli("init", "--shared", "--link")
+        self.cli("init", "--git", "--link")
         self.make_log()
         for name in (f"{status.STATE}/.lock", f"{status.STATE}/.reminded",
                      f"{status.STATE}/{status.DONE_PENDING}", f"{status.STATE}/{status.DECIDE_PENDING}",
@@ -117,12 +117,12 @@ class InitModeTests(unittest.TestCase):
         self.assertEqual(set(self.git("ls-files").splitlines()), set(self.record_paths()))
 
     def test_legacy_personal_setup_can_switch_to_shared_without_changing_notes(self):
-        self.cli("init", "--personal")
+        self.cli("init", "--local")
         (self.root / status.STATUS).write_text("existing status\n")
         (self.root / status.STATE / "decisions.md").write_text("existing decisions\n")
         self.ex.write_text("# custom before\n/build/\n" + "\n".join(status.LEGACY_EXCLUDE) +
                            "\n# custom after\n/cache/\n")
-        self.cli("init", "--shared")
+        self.cli("init", "--git")
         self.assertEqual((self.root / status.STATUS).read_text(), "existing status\n")
         self.assertEqual((self.root / status.STATE / "decisions.md").read_text(), "existing decisions\n")
         self.assertTrue(self.ignored("build/example"))
@@ -131,33 +131,45 @@ class InitModeTests(unittest.TestCase):
         self.assertFalse(self.ignored(f"{status.STATE}/decisions.md"))
 
     def test_rerun_keeps_each_mode_and_exclusions_unchanged(self):
-        for mode in ("shared", "personal"):
+        for mode in ("git", "local"):
             self.cli("init", f"--{mode}")
             previous = self.ex.read_bytes()
             self.cli("init")
             self.assertEqual(self.ex.read_bytes(), previous)
-            self.assertEqual(self.ignored(status.STATUS), mode == "personal")
+            self.assertEqual(self.ignored(status.STATUS), mode == "local")
+
+    def test_setups_from_before_the_rename_keep_their_mode(self):
+        for old, mode in (("personal", "local"), ("shared", "git")):
+            self.cli("init", f"--{mode}")
+            body = self.ex.read_text().replace(f"# where-were-we ({mode})", f"# where-were-we ({old})")
+            self.ex.write_text(body)
+            self.cli("init")
+            text = self.ex.read_text()
+            self.assertIn(f"# where-were-we ({mode})", text)
+            self.assertNotIn(f"({old})", text)
+            self.assertEqual(text.count(status.EXCLUDE_END), 1)
+            self.assertEqual(self.ignored(status.STATUS), mode == "local")
 
     def test_existing_legacy_setup_does_not_ask_again(self):
-        self.cli("init", "--personal")
+        self.cli("init", "--local")
         self.ex.write_text("\n".join(status.LEGACY_EXCLUDE) + "\n")
         self.cli("init")
         self.assertTrue(self.ignored(status.STATUS))
 
     def test_shared_untracked_records_can_switch_back_to_personal(self):
-        self.cli("init", "--shared")
+        self.cli("init", "--git")
         original = (self.root / status.STATUS).read_bytes()
-        self.cli("init", "--personal")
+        self.cli("init", "--local")
         self.assertTrue(self.ignored(status.STATUS))
         self.assertEqual((self.root / status.STATUS).read_bytes(), original)
         self.assertEqual(self.git("ls-files"), "")
 
     def test_personal_refuses_tracked_records_without_changing_anything(self):
-        self.cli("init", "--shared")
+        self.cli("init", "--git")
         self.commit_records()
         before = (self.ex.read_bytes(), (self.root / status.STATUS).read_bytes(),
                   self.git("ls-files", "--stage"))
-        self.cli("init", "--personal", success=False)
+        self.cli("init", "--local", success=False)
         after = (self.ex.read_bytes(), (self.root / status.STATUS).read_bytes(),
                  self.git("ls-files", "--stage"))
         self.assertEqual(before, after)
@@ -166,17 +178,17 @@ class InitModeTests(unittest.TestCase):
         (self.root / status.STATUS).write_text("preexisting project notes\n")
         self.git("add", status.STATUS)
         original = self.ex.read_bytes()
-        self.cli("init", "--personal", success=False)
+        self.cli("init", "--local", success=False)
         self.assertFalse((self.root / status.STATE).exists())
         self.assertEqual(self.ex.read_bytes(), original)
         self.assertEqual(self.git("ls-files"), "STATUS.md\n")
 
     def test_tracked_records_can_switch_to_personal_after_explicit_untracking(self):
-        self.cli("init", "--shared")
+        self.cli("init", "--git")
         self.commit_records()
         before = {name: (self.root / name).read_bytes() for name in self.record_paths()[:2]}
         self.git("rm", "--cached", "--", *before)
-        self.cli("init", "--personal")
+        self.cli("init", "--local")
         for name, content in before.items():
             self.assertEqual((self.root / name).read_bytes(), content)
             self.assertTrue(self.ignored(name))
@@ -188,15 +200,15 @@ class InitModeTests(unittest.TestCase):
         (self.root / "source.txt").write_text("user changes\n")
         self.git("add", "source.txt")
         previous = self.git("ls-files", "--stage")
-        self.cli("init", "--shared")
+        self.cli("init", "--git")
         self.assertEqual(self.git("ls-files", "--stage"), previous)
         self.assertEqual((self.root / ".gitignore").read_text(), "build/\n")
 
     def test_shared_reports_other_ignore_rules_and_preserves_previous_mode(self):
-        self.cli("init", "--personal")
+        self.cli("init", "--local")
         original = self.ex.read_bytes()
         (self.root / ".gitignore").write_text("/STATUS.md\n")
-        self.cli("init", "--shared", success=False)
+        self.cli("init", "--git", success=False)
         self.assertEqual(self.ex.read_bytes(), original)
         self.assertEqual((self.root / ".gitignore").read_text(), "/STATUS.md\n")
         self.assertTrue(self.ignored(f"{status.STATE}/decisions.md"))
@@ -204,21 +216,21 @@ class InitModeTests(unittest.TestCase):
     def test_shared_does_not_remove_user_exclusions_outside_its_block(self):
         self.ex.write_text(self.ex.read_text() + "/STATUS.md\n")
         original = self.ex.read_bytes()
-        self.cli("init", "--shared", success=False)
+        self.cli("init", "--git", success=False)
         self.assertEqual(self.ex.read_bytes(), original)
         self.assertFalse((self.root / status.STATE).exists())
 
     def test_shared_requires_git_but_personal_works_without_git(self):
         other = self.base / "no git"
         other.mkdir()
-        self.cli("init", "--shared", root=other, success=False)
+        self.cli("init", "--git", root=other, success=False)
         self.assertEqual(list(other.iterdir()), [])
-        self.cli("init", "--personal", root=other)
+        self.cli("init", "--local", root=other)
         self.cli("init", root=other)
         self.assertTrue((other / status.STATUS).exists())
 
     def test_cloned_records_keep_shared_mode_and_ignore_runtime_on_first_write(self):
-        self.cli("init", "--shared")
+        self.cli("init", "--git")
         self.commit_records()
         clone = self.base / "clone"
         self.git("clone", "-q", str(self.root), str(clone))
@@ -232,7 +244,7 @@ class InitModeTests(unittest.TestCase):
         self.assertEqual((clone / ".git/info/exclude").read_bytes(), before)
 
     def test_stop_hook_in_clone_keeps_reminder_local_without_init(self):
-        self.cli("init", "--shared")
+        self.cli("init", "--git")
         self.commit_records()
         clone = self.base / "clone"
         self.git("clone", "-q", str(self.root), str(clone))
@@ -242,7 +254,7 @@ class InitModeTests(unittest.TestCase):
         self.assertTrue(self.ignored(f"{status.STATE}/.reminded", root=clone))
 
     def test_conflicting_flags_make_no_files(self):
-        self.cli("init", "--personal", "--shared", success=False)
+        self.cli("init", "--local", "--git", success=False)
         self.assertFalse((self.root / status.STATUS).exists())
 
 

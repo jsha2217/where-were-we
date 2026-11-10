@@ -24,7 +24,7 @@ class RecoveryTestCase(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=TEMP_ROOT)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.run_cli("init", "--personal")
+        self.run_cli("init", "--local")
         self.run_cli("claim", "first task")
         self.run_cli("claim", "second task")
         self.path = self.root / status.STATUS

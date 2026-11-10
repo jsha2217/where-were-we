@@ -10,7 +10,7 @@ git config --global user.email me@example.com; git config --global user.name me;
 # 1 init: out of git, link block
 mkdir $T/p && cd $T/p && git init -q && echo a > a && git add a && git commit -qm a
 printf '# My notes\n' > CLAUDE.local.md
-$PY init --personal --link >/dev/null
+$PY init --local --link >/dev/null
 ok "1 files created" '[ -f STATUS.md ] && [ -f .where-were-we/decisions.md ] && [ -d .where-were-we/log ]'
 ok "1 nothing shows in git status" '[ -z "$(git status --porcelain)" ]'
 ok "1 link block appended, user text kept" 'head -1 CLAUDE.local.md | grep -q "My notes" && grep -q "where-were-we:start" CLAUDE.local.md'
@@ -48,13 +48,13 @@ ok "4 missing section fails, names it" '$PY check | grep -q "missing section .##
 ok "4 claim refuses without the section it needs" 'sub STATUS.md "## Next" "## Later" && ! $PY claim y >/dev/null 2>&1'
 
 # 5 subfolder, branches
-mkdir $T/r && cd $T/r && git init -q && echo a > a && git add a && git commit -qm a && $PY init --personal >/dev/null && mkdir -p src/deep
+mkdir $T/r && cd $T/r && git init -q && echo a > a && git add a && git commit -qm a && $PY init --local >/dev/null && mkdir -p src/deep
 ok "5 works from a subfolder" 'cd src/deep && $PY claim "from sub" >/dev/null && grep -q "from sub" $T/r/STATUS.md'
 cd $T/r && git checkout -qb feat && echo b > b && git add b && git commit -qm b && git checkout -q main && git merge -q --no-edit feat
 ok "5 branch switch and merge leave it alone" 'grep -q "from sub" STATUS.md && git add -A && [ -z "$(git diff --cached --name-only)" ]'
 
 # 6 parallel writers: two windows and subagents at once
-mkdir $T/c && cd $T/c && $PY init --personal >/dev/null
+mkdir $T/c && cd $T/c && $PY init --local >/dev/null
 for i in $(seq 20); do $PY claim "task $i" >/dev/null & done; wait
 ok "6 20 parallel claims all kept" '[ $(grep -c "^- \[ \] task" STATUS.md) = 20 ]'
 for i in $(seq 10); do $PY decide "parallel $i" >/dev/null & done; wait

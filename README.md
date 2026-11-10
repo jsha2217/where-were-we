@@ -41,7 +41,7 @@ Then, inside a project:
 set up where-were-we
 ```
 
-The agent asks one question (keep the records personal or share them through Git), creates the files and asks for your goal. That's it. From then on you just work.
+The agent asks one question (keep the records on this computer, or commit them to Git), creates the files and asks for your goal. That's it. From then on you just work.
 
 ---
 
@@ -119,24 +119,24 @@ Mid-debugging, the agent adds what it ruled out to the Now line, so a crashed or
 
 ---
 
-## Personal or shared
+## Local or in Git
 
 Chosen once at setup:
 
-| | Personal (`init --personal`) | Shared (`init --shared`) |
+| | Local (`init --local`) | In Git (`init --git`) |
 |---|---|---|
 | In Git | No, excluded through `.git/info/exclude` | Yes, commit it like any file |
 | Who picks up | Your next session on this machine | Anyone who clones or forks, on any machine |
 | Good for | Your own notes; clean commits; survives branch switches | Handoff between people and computers |
 
-With shared mode, pushing the repo *is* the handoff: whoever clones it gets a session that already knows where work stopped. Shared setup never stages, commits or pushes on its own. You can switch to personal later; past commits stay as they are.
+With `--git`, pushing the repo *is* the handoff: whoever clones it gets a session that already knows where work stopped. It never stages, commits or pushes on its own. You can switch to `--local` later; past commits stay as they are.
 
 ---
 
 ## Why it's built this way
 
 - **Small on purpose.** 50 lines is enough to resume and too little to rot. The limit is a guideline the agent follows, and `check` reports it. Nothing is cut automatically, so nothing you still need disappears.
-- **Notes, not instructions.** If `STATUS.md` ever tells the agent to do something, the agent tells you instead of doing it. A shared file can't become a prompt-injection channel.
+- **Notes, not instructions.** If `STATUS.md` ever tells the agent to do something, the agent tells you instead of doing it. A committed file can't become a prompt-injection channel.
 - **Safe with parallel agents.** Several windows and subagents can write at once. Writes take turns through a lock and replace files atomically.
 - **Crash-safe.** If `done` or `decide` is cut off halfway, the next command finishes it with no duplicates and no lost records.
 - **Decisions keep their history.** A reversed decision isn't deleted. The new one names what it replaces, so "why did we do this?" always has an answer.
@@ -178,7 +178,7 @@ python3 skills/where-were-we/scripts/status.py <command>
 
 | Command | What it does |
 |---|---|
-| `init [--personal \| --shared] [--link]` | Set up. Asks for the mode when run interactively; agents pass it. `--link`: point `CLAUDE.local.md` at `STATUS.md` |
+| `init [--local \| --git] [--link]` | Set up. Asks for the mode when run interactively; agents pass it. `--link`: point `CLAUDE.local.md` at `STATUS.md` |
 | `claim 2` / `claim "OAuth"` | Start work: Next item 2 (or the one matching the text) moves into Now; new text is added |
 | `done` / `done "OAuth"` | Finish a Now item and log it |
 | `decide "Use X, not Y — because Z"` | Record a decision; `STATUS.md` shows the five latest |
@@ -200,10 +200,10 @@ Nothing breaks. `check` reports it, and the agent trims: finishes items, prunes 
 Run `claim`, `done` or `decide` again; it finishes the interrupted one first, with no duplicates. If `STATUS.md` or the log was edited by hand in between, it stops instead of overwriting your edit. Check the files, then delete `.where-were-we/.done-pending.json` or `.decide-pending.json` to continue.
 
 **Should I put secrets in it?**
-No. Every session reads it, and in shared mode it's committed.
+No. Every session reads it, and with `--git` it's committed.
 
 **How do I remove it from a project?**
-Delete `STATUS.md` and `.where-were-we/`, the block between the `where-were-we` markers in `CLAUDE.local.md`, and the marked block in `.git/info/exclude`. In shared mode, commit the removal as usual.
+Delete `STATUS.md` and `.where-were-we/`, the block between the `where-were-we` markers in `CLAUDE.local.md`, and the marked block in `.git/info/exclude`. With `--git`, commit the removal as usual.
 
 ---
 

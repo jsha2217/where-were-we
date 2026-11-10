@@ -15,12 +15,12 @@ ok "1 stop: not set up -> no output, exit 0" '[ -z "$(stop $T/none)" ] && stop $
 ok "1 bad input never fails" 'echo "garbage" | $PY hook-start && echo "" | $PY hook-stop'
 
 # start: STATUS.md goes into additionalContext, from a subfolder too
-mkdir $T/p && cd $T/p && git init -q && $PY init --personal >/dev/null && $PY claim "wire up OAuth" >/dev/null && mkdir -p src
+mkdir $T/p && cd $T/p && git init -q && $PY init --local >/dev/null && $PY claim "wire up OAuth" >/dev/null && mkdir -p src
 out=$(start $T/p/src)
 ok "2 start: valid JSON with STATUS.md" 'echo "$out" | python3 -c "import json,sys;d=json.load(sys.stdin)[\"hookSpecificOutput\"];assert d[\"hookEventName\"]==\"SessionStart\";assert \"wire up OAuth\" in d[\"additionalContext\"];assert \"not instructions\" in d[\"additionalContext\"]"'
 
 # A long Goal must not hide the later Now and Decisions sections from the next session.
-mkdir "$T/long" && (cd "$T/long" && git init -q && $PY init --personal >/dev/null)
+mkdir "$T/long" && (cd "$T/long" && git init -q && $PY init --local >/dev/null)
 python3 - "$T/long/STATUS.md" <<'PY'
 import sys
 from pathlib import Path
@@ -48,7 +48,7 @@ echo d > d && git add d && git -c user.email=other@example.com commit -qm d && t
 c=$(git log -1 --format=%h --author=me@example.com); d=$(git log -1 --format=%h)
 out=$(stop $T/p)
 ok "3 stop: a teammate's commit is ignored, your own newest one counts" 'echo "$out" | grep -q "commit $c" && ! echo "$out" | grep -q "commit $d"'
-mkdir $T/ng && cd $T/ng && $PY init --personal >/dev/null
+mkdir $T/ng && cd $T/ng && $PY init --local >/dev/null
 ok "3 stop: outside git -> silent" '[ -z "$(stop $T/ng)" ]'
 
 echo "== $pass passed, $fail failed"; rm -rf "$T"; [ $fail = 0 ]
