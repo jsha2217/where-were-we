@@ -4,7 +4,7 @@
 
 **Your coding agent forgets everything when the session ends. where-were-we makes sure the next session doesn't start from zero.**
 
-![version](https://img.shields.io/badge/version-0.13.0_beta-blue)
+![version](https://img.shields.io/badge/version-1.0.0-blue)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-D97757)
@@ -209,7 +209,7 @@ Delete `STATUS.md` and `.where-were-we/`, the block between the `where-were-we` 
 
 ## Status
 
-**Beta.** Being used on real projects before 1.0. Tested on macOS and Linux with Python 3.9, 3.12 and 3.14. Windows is not verified yet.
+**1.0.** Tested on macOS and Linux with Python 3.9, 3.12 and 3.14. Windows is not verified yet.
 
 ## Development
 

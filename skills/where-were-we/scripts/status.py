@@ -28,7 +28,7 @@ from contextlib import contextmanager, redirect_stdout
 import io
 from pathlib import Path
 
-VERSION = "0.13.0"
+VERSION = "1.0.0"
 STATUS = "STATUS.md"
 STATE = ".where-were-we"
 DONE_PENDING = ".done-pending.json"

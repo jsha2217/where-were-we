@@ -4,7 +4,7 @@
 
 **코딩 에이전트는 세션이 끝나면 모든 걸 잊습니다. where-were-we는 다음 세션이 처음부터 다시 시작하지 않게 합니다.**
 
-![version](https://img.shields.io/badge/version-0.13.0_beta-blue)
+![version](https://img.shields.io/badge/version-1.0.0-blue)
 ![python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-D97757)
@@ -211,7 +211,7 @@ Goal, Next, Blocked는 직접 편집합니다. Now는 `claim`과 `done`으로만
 
 ## 상태
 
-**베타.** 1.0 전에 실제 프로젝트에서 쓰면서 검증하고 있습니다. macOS·Linux에서 Python 3.9, 3.12, 3.14로 테스트했습니다. Windows는 아직 검증 전입니다.
+**1.0.** macOS·Linux에서 Python 3.9, 3.12, 3.14로 테스트했습니다. Windows는 아직 검증 전입니다.
 
 ## 개발
 
