@@ -8,6 +8,7 @@
 ![python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-D97757)
+![license](https://img.shields.io/badge/license-MIT-green)
 
 One short `STATUS.md` (50 lines max) that says where the work is *right now*: what's in progress, what you already ruled out, what's blocked and what you decided. Every new session reads it first.
 
@@ -227,4 +228,4 @@ tests/                 run.sh, shell and Python tests
 
 ## License
 
-No license yet (all rights reserved). One will be chosen before 1.0.
+[MIT](LICENSE)

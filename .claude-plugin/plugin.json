@@ -1,6 +1,7 @@
 {
   "name": "where-were-we",
   "version": "0.13.0",
+  "license": "MIT",
   "description": "A 50-line STATUS.md for the next session or person. Keep notes local or share them through Git. One Python file, no database.",
   "author": {
     "name": "jsha2217"

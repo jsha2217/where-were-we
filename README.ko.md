@@ -8,6 +8,7 @@
 ![python](https://img.shields.io/badge/python-3.9%2B-3776AB)
 ![dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-plugin-D97757)
+![license](https://img.shields.io/badge/license-MIT-green)
 
 작업이 *지금* 어디까지 왔는지 적은 짧은 `STATUS.md` 하나(최대 50줄)입니다. 진행 중인 일, 이미 확인하고 아니었던 것, 막힌 것, 정한 것이 들어갑니다. 새 세션은 이 파일부터 읽습니다.
 
@@ -229,4 +230,4 @@ tests/                 run.sh, 셸·파이썬 테스트
 
 ## 라이선스
 
-아직 없습니다(all rights reserved). 1.0 전에 정합니다.
+[MIT](LICENSE)
